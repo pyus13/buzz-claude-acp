@@ -49,6 +49,23 @@ export async function applyOptions(connection, sessionId, configOptions, wanted)
   return options;
 }
 
+/** The options a turn runs with: a per-message pick, else the agent's own
+ * setting, else this device's default. Only a value the agent's synced
+ * settings chose counts as synced. */
+export function wantedOptions(delivery, settings, defaults) {
+  const synced = delivery.synced ?? {};
+  const effective = defaults.effective(settings);
+  return [
+    ["mode", settings.mode, "mode" in synced],
+    ["model", delivery.model || effective.model, !delivery.model && Boolean(settings.model) && "model" in synced],
+    [
+      "effort",
+      delivery.effort || (delivery.model ? "default" : effective.effort),
+      !delivery.effort && Boolean(settings.effort) && "effort" in synced,
+    ],
+  ];
+}
+
 /** What a turn's `stopReason` means for Buzz. */
 export function outcomeOf(stopReason) {
   if (stopReason === "cancelled") return STOPPED;
@@ -99,6 +116,8 @@ export class Conversation {
     this.pumping = false;
     this.steering = Promise.resolve();
     this.idleTimer = undefined;
+    /** The permission mode the session runs in, for its permission prompts. */
+    this.mode = undefined;
     this.used = record?.at ?? 0;
   }
 
@@ -204,7 +223,7 @@ export class Conversation {
         this.starting = item;
         this.agent.changed();
         const result = await this.runTurn(item).catch((error) =>
-          this.agent.disposed || this.connection?.stopped ? STOPPED : { ok: false, error: errorText(error) },
+          this.agent.disposed ? STOPPED : { ok: false, error: errorText(error) },
         );
         this.starting = undefined;
         item.resolve(result);
@@ -222,13 +241,8 @@ export class Conversation {
     const { delivery, conversation, settings } = item;
     await this.open(delivery, conversation, settings);
     if (item.stopped) return STOPPED;
-    const synced = delivery.synced ?? {};
-    const effective = this.agent.defaults.effective(settings);
-    this.options = await applyOptions(this.connection, this.record.sessionId, this.options, [
-      ["mode", settings.mode, "mode" in synced],
-      ["model", delivery.model || effective.model, !delivery.model && "model" in synced],
-      ["effort", delivery.effort || (delivery.model ? "default" : effective.effort), !delivery.effort && "effort" in synced],
-    ]);
+    this.options = await applyOptions(this.connection, this.record.sessionId, this.options, wantedOptions(delivery, settings, this.agent.defaults));
+    this.mode = settings.mode;
     if (item.stopped) return STOPPED;
     const before = this.record.cursor;
     const prompt = await this.agent.kit.turnPrompt(delivery, conversation, this.cursorOption());
@@ -260,8 +274,10 @@ export class Conversation {
       }
       if (sessionLost(error, connection)) this.lose();
       if (this.agent.disposed || connection.stopped) result = STOPPED;
-      else if (!turn.updated && !retried && sessionLost(error, connection)) {
+      // Once, and only for its own message: one steered into it would be lost.
+      else if (!turn.updated && !retried && turn.receipts.length === 1 && sessionLost(error, connection)) {
         this.turn = undefined;
+        this.starting = item;
         turn.finish({ ok: true });
         return this.runTurn(item, true);
       } else result = { ok: false, error: errorText(error) };
@@ -290,12 +306,26 @@ export class Conversation {
     const cwd = await this.agent.workspace(settings);
     this.handler = this.agent.tools(agentHandle, conversation, cwd);
     const shape = sessionShape(settings);
-    if (this.live && this.connection === connection && this.record?.shape === shape) return;
+    if (this.live && this.connection === connection && this.record?.shape === shape) {
+      this.agent.opened(this); // Most recently used.
+      return;
+    }
     await this.close();
     // Other instructions or another workspace shape a new session. One
     // carried over from Buzz's Claude has no shape yet and is kept.
     if (this.record?.shape !== undefined && this.record.shape !== shape) this.forget();
     await this.agent.makeRoom(this);
+    // Counted from now, so opens running at once share the budget.
+    this.agent.opened(this);
+    try {
+      await this.start(delivery, settings, connection, cwd, shape);
+    } catch (error) {
+      this.lose();
+      throw error;
+    }
+  }
+
+  async start(delivery, settings, connection, cwd, shape) {
     const mcp = await this.agent.host.serveMcp((message) => this.answerMcp(message));
     this.mcp = mcp;
     // Buzz stops a server whose token another program used: reopen next turn.
@@ -313,7 +343,10 @@ export class Conversation {
       opened = await connection
         .request("session/resume", { sessionId: this.record.sessionId, ...params }, START_TIMEOUT_MS)
         .catch((error) => {
-          console.warn("claude-acp: could not resume the session; starting a new one", error);
+          // Only a session the adapter no longer has is given up; anything
+          // else (a crash, a timeout) fails this turn and keeps it for the next.
+          if (connection.closed || !(error?.code === -32002 || /not found/i.test(errorText(error)))) throw error;
+          console.warn("claude-acp: the saved session is gone; starting a new one", error);
           return undefined;
         });
     if (!opened) {
@@ -328,7 +361,6 @@ export class Conversation {
     this.options = opened.configOptions;
     this.unsubscribe = connection.onSession(this.record.sessionId, (update) => this.update(update));
     this.live = true;
-    this.agent.opened(this);
     this.save();
   }
 
@@ -373,6 +405,7 @@ export class Conversation {
     this.mcp = undefined;
     void mcp?.close().catch(() => {});
     this.agent.closed(this);
+    if (!this.busy) this.agent.idle();
   }
 
   /** Closes the session and its MCP server, keeping the record so the next
@@ -418,7 +451,8 @@ export class Conversation {
       }
     }
     if (this.starting && (!item || this.starting === item)) this.starting.stopped = true;
-    if (this.turn && this.live) this.connection.notify("session/cancel", { sessionId: this.record.sessionId });
+    if (this.turn && this.record && this.connection && !this.connection.closed)
+      this.connection.notify("session/cancel", { sessionId: this.record.sessionId });
   }
 
   /** Stops everything: the running turn and every queued message. */
@@ -430,12 +464,16 @@ export class Conversation {
 
   /** Ends the session for good; the next message starts a new one. */
   async reset() {
-    const turn = this.turn;
+    // A turn running or still opening its session ends first, so the session
+    // is not closed and forgotten underneath it.
+    const pending = [this.turn?.done, this.starting?.done].filter(Boolean);
     this.interrupt();
-    if (turn) await Promise.race([turn.done, new Promise((resolve) => setTimeout(resolve, SETTLE_MS))]);
+    if (pending.length)
+      await Promise.race([Promise.all(pending), new Promise((resolve) => setTimeout(resolve, SETTLE_MS))]);
     await this.close();
     this.forget();
     this.agent.changed();
+    this.agent.idle();
   }
 
   /** Compacts the session's history to free context. */

@@ -10,8 +10,8 @@ export class AcpConnection {
   /** Starts the adapter in `cwd` and completes the ACP handshake. With an
    * `agent`, the process carries a Buzz credential that acts as that agent,
    * so `buzz` commands Claude runs reach the community as it (newer Buzz). */
-  static async start(host, { cwd, agent }) {
-    const connection = new AcpConnection();
+  static async start(host, { cwd, agent, permissionMode }) {
+    const connection = new AcpConnection(permissionMode);
     try {
       await connection.spawn(host, cwd, agent);
       if (agent && typeof connection.process.actAs === "function")
@@ -37,7 +37,10 @@ export class AcpConnection {
     }
   }
 
-  constructor() {
+  /** `permissionMode(sessionId)`: the mode a session runs in, which decides
+   * how its permission prompts are answered. */
+  constructor(permissionMode = () => undefined) {
+    this.permissionMode = permissionMode;
     this.process = undefined;
     this.info = undefined;
     /** The latest `auth/status_update` the adapter sent, if any. */
@@ -175,7 +178,8 @@ export class AcpConnection {
 
   /** Answers a request the adapter makes of Buzz. */
   answer(method, params) {
-    if (method === "session/request_permission") return { result: permissionAnswer(params) };
+    if (method === "session/request_permission")
+      return { result: permissionAnswer(params, this.permissionMode(params.sessionId)) };
     // Status reports and extensions need no answer beyond receipt.
     if (method.startsWith("_") || method.startsWith("auth/")) return { result: {} };
     return { error: { code: -32601, message: `Buzz does not offer ${method}` } };

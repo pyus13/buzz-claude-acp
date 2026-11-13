@@ -41,6 +41,9 @@ check() {
 if [ "${1:-}" = "--check" ]; then check; exit 0; fi
 
 NODE=$(find_node) || fail "Node.js was not found; install Node.js 20 or later"
+# The real executable, not a version manager's shim that needs its manager on
+# the PATH Buzz does not give it.
+NODE=$("$NODE" -p 'process.execPath')
 major=$("$NODE" -p 'process.versions.node.split(".")[0]')
 [ "$major" -ge 20 ] || fail "Node.js $("$NODE" --version) is too old; install 20 or later"
 NPM="$(dirname "$NODE")/npm"

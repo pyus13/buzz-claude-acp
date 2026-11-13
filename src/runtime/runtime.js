@@ -82,8 +82,8 @@ export class Runtime {
     while (this.live.size >= MAX_LIVE_SESSIONS) {
       const idle = [...this.live].find((conversation) => conversation !== opening && !conversation.busy);
       if (!idle) return; // Every open session is working; let this one open too.
-      await idle.close();
-      idle.agent.idle();
+      // Leaves the budget at once; its session closes in the background.
+      void idle.close();
     }
   }
 

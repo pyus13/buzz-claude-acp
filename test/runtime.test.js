@@ -399,3 +399,92 @@ describe("views", () => {
     expect(runtime.catalog.snapshot()).toMatchObject({ readiness: "attention", attentionLabel: "Sign in to Claude" });
   });
 });
+
+describe("second review", () => {
+  it("runs two standalone turns at once without one stopping the other", async () => {
+    const script = { prompt: async () => (await tick(15), { stopReason: "end_turn" }) };
+    const { runtime } = setup({ script });
+    const { delivery } = mention("unused");
+    const turn = (key) => runtime.runOnce({ delivery, key, signal: new AbortController().signal, prompt: async () => key });
+    const [first, second] = await Promise.all([turn("a"), turn("b")]);
+    expect(first).toEqual({ ok: true });
+    expect(second).toEqual({ ok: true });
+  });
+
+  it("reports a failure to open after an idle close, instead of stopping quietly", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let refuse = false;
+    const script = {
+      "session/resume": () => {
+        if (refuse) throw Object.assign(new Error("Workspace is not trusted"), { code: -32000 });
+        return undefined;
+      },
+    };
+    const { runtime, kit } = setup({ script });
+    const first = mention("one", { root: "t" });
+    await runtime.run(first.delivery);
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 10);
+    refuse = true;
+    const second = mention("two", { root: "t" });
+    await runtime.run(second.delivery);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await second.done()).toEqual({ ok: false, error: "Workspace is not trusted" });
+    expect(kit.replies.at(-1).text).toMatch(/could not finish: Workspace is not trusted/);
+  });
+
+  it("keeps the saved session when resuming fails for another reason than its loss", async () => {
+    const storage = fakeStorage();
+    storage.data.set(`${TYPE}/agent-1`, JSON.stringify({ v: 1, conversations: { c1: { sessionId: "kept", at: 1 } } }));
+    const script = { "session/resume": () => Promise.reject(Object.assign(new Error("timed out"), { code: -32603 })) };
+    const { runtime } = setup({ script, storage });
+    const message = mention("x", { config: { scope: "channel" } });
+    await runtime.run(message.delivery);
+    expect(await settle(message)).toEqual({ ok: false, error: "timed out" });
+    await runtime.records.flush();
+    expect(JSON.parse(storage.data.get(`${TYPE}/agent-1`)).conversations.c1.sessionId).toBe("kept");
+  });
+
+  it("closes the MCP server of a session that failed to open", async () => {
+    const script = { "session/new": () => Promise.reject(new Error("refused")) };
+    const { runtime, host } = setup({ script });
+    const message = mention("x", { root: "t" });
+    await runtime.run(message.delivery);
+    await settle(message);
+    expect(host.servers.length).toBeGreaterThan(0);
+    expect(host.servers.every((server) => !server.open)).toBe(true);
+    expect(runtime.live.size).toBe(0);
+  });
+
+  it("starts a new session cleanly while a turn is still opening", async () => {
+    let release;
+    const script = { "session/new": (params, { state }) => (release ? undefined : new Promise((resolve) => (release = () => resolve(undefined)))) };
+    const { runtime, claude } = setup({ script });
+    const message = mention("x", { root: "t" });
+    await runtime.run(message.delivery);
+    await tick(20);
+    const agent = { key: "agent-1", config: message.delivery.config };
+    const resetting = runtime.control(agent, { channelId: "c1", root: "t" }, "new");
+    await tick(5);
+    script["session/new"] = undefined;
+    release();
+    await resetting;
+    expect(await message.done()).toEqual({ ok: true, stopped: true });
+    const again = mention("y", { root: "t" });
+    await runtime.run(again.delivery);
+    expect(await settle(again)).toEqual({ ok: true });
+    void claude;
+  });
+
+  it("still stops a turn after Buzz stopped its MCP server", async () => {
+    const { runtime, claude, script, host } = setup();
+    script.prompt = claude.hanging().prompt;
+    const message = mention("long");
+    await runtime.run(message.delivery);
+    await tick(20);
+    host.servers[0].stopByHost();
+    await tick();
+    await message.delivery.stop();
+    expect(await message.done()).toEqual({ ok: true, stopped: true });
+  });
+});

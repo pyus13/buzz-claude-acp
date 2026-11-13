@@ -4,7 +4,7 @@ import { AcpConnection } from "../acp/connection.js";
 import { errorText, stepOf } from "../acp/protocol.js";
 import { CLOSE_TIMEOUT_MS, START_TIMEOUT_MS, TITLE } from "../constants.js";
 import { readConfig } from "../config.js";
-import { applyOptions, Conversation, outcomeOf, sessionParams } from "./conversation.js";
+import { applyOptions, Conversation, outcomeOf, sessionParams, wantedOptions } from "./conversation.js";
 
 const REMOVED = "This agent was removed";
 
@@ -23,6 +23,10 @@ export class AgentRuntime {
     });
     this.connection = undefined;
     this.connecting = undefined;
+    /** Watch and timer turns running now, each in a session of its own. */
+    this.standalone = new Map();
+    /** Watch and timer turns still opening their session. */
+    this.starting = 0;
     this.disposed = false;
   }
 
@@ -63,7 +67,11 @@ export class AgentRuntime {
     if (this.connection && !this.connection.closed) return this.connection;
     this.connecting ??= (async () => {
       const cwd = await this.workspace(settings);
-      const connection = await AcpConnection.start(this.host, { cwd, agent: agentHandle });
+      const connection = await AcpConnection.start(this.host, {
+        cwd,
+        agent: agentHandle,
+        permissionMode: (sessionId) => this.modeOf(sessionId),
+      });
       if (this.disposed) {
         void connection.stop();
         throw new Error(REMOVED);
@@ -93,10 +101,18 @@ export class AgentRuntime {
     return this.kit.tools(agentHandle, conversation, read ? { read } : undefined);
   }
 
-  /** Stops the process once no conversation has a session open in it. */
+  /** The permission mode of the session `sessionId` runs in, if known. */
+  modeOf(sessionId) {
+    if (this.standalone.has(sessionId)) return this.standalone.get(sessionId);
+    for (const conversation of this.conversations.values())
+      if (conversation.record?.sessionId === sessionId) return conversation.mode;
+    return undefined;
+  }
+
+  /** Stops the process once nothing has a session open in it. */
   idle() {
     const open = [...this.conversations.values()].some((conversation) => conversation.live || conversation.busy);
-    if (!open && !this.connecting) void this.connection?.stop();
+    if (!open && !this.standalone.size && !this.starting && !this.connecting) void this.connection?.stop();
   }
 
   // --- saved sessions
@@ -172,6 +188,8 @@ export class AgentRuntime {
     let mcp;
     let sessionId;
     let unsubscribe;
+    // Holds the process until this turn's session is open and counted.
+    this.starting += 1;
     try {
       connection = await this.connect(agentHandle, settings);
       const cwd = await this.workspace(settings);
@@ -180,6 +198,8 @@ export class AgentRuntime {
       const system = await this.kit.systemPrompt(delivery, { scope: settings.scope, cwd, instructions: settings.instructions });
       const created = await connection.request("session/new", sessionParams(cwd, mcp, system), START_TIMEOUT_MS);
       sessionId = created.sessionId;
+      this.standalone.set(sessionId, settings.mode);
+      this.starting -= 1;
       let last = "";
       unsubscribe = connection.onSession(sessionId, (update) => {
         const step = stepOf(update);
@@ -188,13 +208,7 @@ export class AgentRuntime {
         last = label;
         delivery.step?.(step.tool, step.target);
       });
-      const synced = delivery.synced ?? {};
-      const effective = this.defaults.effective(settings);
-      await applyOptions(connection, sessionId, created.configOptions, [
-        ["mode", settings.mode, "mode" in synced],
-        ["model", effective.model, "model" in synced],
-        ["effort", effective.effort, "effort" in synced],
-      ]);
+      await applyOptions(connection, sessionId, created.configOptions, wantedOptions(delivery, settings, this.defaults));
       const text = await prompt();
       if (text === undefined) return { ok: true };
       if (signal.aborted) return { ok: false, error: "The turn was stopped before it started" };
@@ -213,6 +227,7 @@ export class AgentRuntime {
     } catch (error) {
       return { ok: false, error: errorText(error) };
     } finally {
+      if (!this.standalone.delete(sessionId)) this.starting -= 1;
       unsubscribe?.();
       if (sessionId && connection && !connection.closed && connection.sessionCapabilities.close)
         void connection.request("session/close", { sessionId }, CLOSE_TIMEOUT_MS).catch(() => {});

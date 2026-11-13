@@ -47,25 +47,36 @@ export function stepOf(update) {
   }
 }
 
+/** Leaving plan mode, in each permission mode Claude goes on in. */
+const EXIT_PLAN = {
+  bypassPermissions: "exit-plan-bypass",
+  auto: "exit-plan-auto",
+  acceptEdits: "exit-plan-accept-edits",
+  default: "exit-plan-default",
+};
+
 /** The answer to `session/request_permission`. Buzz has no one to ask in the
  * middle of a turn, so the agent's permission mode, the owner's choice, decides:
- * - Leaving plan mode is approving the plan. In Plan mode the plan stands:
- *   Claude keeps planning, and its context is never cleared.
- * - Anything else is allowed once. "Always" would write a lasting allow rule
- *   into the person's own Claude settings.
- * An option list with neither cancels the call. */
-export function permissionAnswer(params) {
+ * - Leaving plan mode approves the plan. In Plan mode the plan stands and
+ *   Claude keeps planning. In another mode Claude goes on in that mode. Its
+ *   context is never cleared (`exit-plan-clear-*`), which would also cost the
+ *   session its Buzz tools.
+ * - Anything else is allowed once, never "always": that would write a
+ *   lasting allow rule into the person's own Claude settings.
+ * A prompt with no such option is cancelled. */
+export function permissionAnswer(params, mode) {
   const options = (Array.isArray(params?.options) ? params.options : []).filter(
     (option) => typeof option?.optionId === "string",
   );
   const select = (option) =>
     option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
-  if (options.some((option) => option.optionId.startsWith("exit-plan-")))
-    return select(options.find((option) => String(option.kind).startsWith("reject")));
-  return select(
-    options.find((option) => option.kind === "allow_once") ??
-      options.find((option) => option.kind === "allow_always"),
-  );
+  const byId = (id) => options.find((option) => option.optionId === id);
+  if (options.some((option) => option.optionId.startsWith("exit-plan-"))) {
+    const reject = options.find((option) => String(option.kind).startsWith("reject"));
+    if (mode === "plan" || !mode) return select(reject);
+    return select(byId(EXIT_PLAN[mode]) ?? reject);
+  }
+  return select(options.find((option) => option.kind === "allow_once"));
 }
 
 /** Every choice of a select config option, groups flattened. */

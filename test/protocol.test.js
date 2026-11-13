@@ -42,7 +42,7 @@ describe("permissionAnswer", () => {
       { kind: "reject_once", optionId: "reject" },
     ];
     expect(permissionAnswer({ options })).toEqual(selected("allow-once"));
-    expect(permissionAnswer({ options: [options[0]] })).toEqual(selected("allow-with-updates"));
+    expect(permissionAnswer({ options: [options[0]] })).toEqual({ outcome: { outcome: "cancelled" } });
   });
 
   it("keeps planning instead of approving its own plan or clearing its context", () => {
@@ -52,7 +52,22 @@ describe("permissionAnswer", () => {
       { kind: "allow_once", optionId: "exit-plan-default" },
       { kind: "reject_once", optionId: "reject" },
     ];
+    expect(permissionAnswer({ options }, "plan")).toEqual(selected("reject"));
     expect(permissionAnswer({ options })).toEqual(selected("reject"));
+  });
+
+  it("leaves plan mode in the agent's own mode, never by clearing context", () => {
+    const options = [
+      { kind: "allow_always", optionId: "exit-plan-clear-auto" },
+      { kind: "allow_always", optionId: "exit-plan-auto" },
+      { kind: "allow_always", optionId: "exit-plan-bypass" },
+      { kind: "allow_always", optionId: "exit-plan-accept-edits" },
+      { kind: "reject_once", optionId: "reject" },
+    ];
+    expect(permissionAnswer({ options }, "auto")).toEqual(selected("exit-plan-auto"));
+    expect(permissionAnswer({ options }, "bypassPermissions")).toEqual(selected("exit-plan-bypass"));
+    expect(permissionAnswer({ options }, "acceptEdits")).toEqual(selected("exit-plan-accept-edits"));
+    expect(permissionAnswer({ options: options.filter((o) => o.optionId !== "exit-plan-auto") }, "auto")).toEqual(selected("reject"));
   });
 
   it("cancels when nothing allows", () => {

@@ -174,6 +174,37 @@ describe("SettingsTab", () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ instructions: "mine", model: "sonnet" }), { base: { settings: "rev2" } });
   });
 
+  it("makes a field changed here and elsewhere a conflict, and holds Save until it's resolved", async () => {
+    services();
+    const save = vi.fn(async () => {});
+    const first = readConfig({ instructions: "old" });
+    await render(<SettingsTab agent={agentWith(first)} save={save} settingsSection="identity" />);
+    await settle();
+    const textarea = container.querySelector("textarea");
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+    await act(async () => {
+      setValue.call(textarea, "mine");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await render(<SettingsTab agent={agentWith({ ...first, instructions: "theirs" }, { settings: "rev2" })} save={save} settingsSection="identity" />);
+    await settle();
+    expect(container.textContent).toContain("Instructions changed elsewhere");
+    expect(container.textContent).toContain("Latest: theirs");
+    const submit = container.querySelector('button[type="submit"]');
+    expect(submit.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => submit.click());
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Keep mine").click());
+    await act(async () => container.querySelector('button[type="submit"]').click());
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ instructions: "mine" }), { base: { settings: "rev2" } });
+  });
+
+  it("holds Save while Buzz can't read the agent's config", async () => {
+    services();
+    await render(<SettingsTab agent={{ ...agentWith(readConfig({ workspace: "~/a" })), configProblem: "Unavailable" }} save={async () => {}} settingsSection="runtime" />);
+    expect(container.textContent).toContain("Your edits stay in this form");
+  });
+
   it("shows Save only while there is something to save", async () => {
     services();
     await render(<SettingsTab agent={agentWith(readConfig({}))} save={async () => {}} settingsSection="runtime" />);

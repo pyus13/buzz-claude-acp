@@ -141,16 +141,24 @@ function stepOf(update) {
       return void 0;
   }
 }
-function permissionAnswer(params) {
+var EXIT_PLAN = {
+  bypassPermissions: "exit-plan-bypass",
+  auto: "exit-plan-auto",
+  acceptEdits: "exit-plan-accept-edits",
+  default: "exit-plan-default"
+};
+function permissionAnswer(params, mode) {
   const options = (Array.isArray(params?.options) ? params.options : []).filter(
     (option) => typeof option?.optionId === "string"
   );
   const select = (option) => option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
-  if (options.some((option) => option.optionId.startsWith("exit-plan-")))
-    return select(options.find((option) => String(option.kind).startsWith("reject")));
-  return select(
-    options.find((option) => option.kind === "allow_once") ?? options.find((option) => option.kind === "allow_always")
-  );
+  const byId = (id) => options.find((option) => option.optionId === id);
+  if (options.some((option) => option.optionId.startsWith("exit-plan-"))) {
+    const reject = options.find((option) => String(option.kind).startsWith("reject"));
+    if (mode === "plan" || !mode) return select(reject);
+    return select(byId(EXIT_PLAN[mode]) ?? reject);
+  }
+  return select(options.find((option) => option.kind === "allow_once"));
 }
 var choicesOf = (options = []) => (Array.isArray(options) ? options : []).flatMap(
   (option) => Array.isArray(option?.options) ? choicesOf(option.options) : typeof option?.value === "string" ? [{ value: option.value, name: option.name || option.value, description: option.description }] : []
@@ -173,8 +181,8 @@ var AcpConnection = class _AcpConnection {
   /** Starts the adapter in `cwd` and completes the ACP handshake. With an
    * `agent`, the process carries a Buzz credential that acts as that agent,
    * so `buzz` commands Claude runs reach the community as it (newer Buzz). */
-  static async start(host, { cwd, agent }) {
-    const connection = new _AcpConnection();
+  static async start(host, { cwd, agent, permissionMode }) {
+    const connection = new _AcpConnection(permissionMode);
     try {
       await connection.spawn(host, cwd, agent);
       if (agent && typeof connection.process.actAs === "function")
@@ -197,7 +205,10 @@ var AcpConnection = class _AcpConnection {
       throw error;
     }
   }
-  constructor() {
+  /** `permissionMode(sessionId)`: the mode a session runs in, which decides
+   * how its permission prompts are answered. */
+  constructor(permissionMode = () => void 0) {
+    this.permissionMode = permissionMode;
     this.process = void 0;
     this.info = void 0;
     this.auth = void 0;
@@ -322,7 +333,8 @@ ${lastLines(this.stderr)}` : "";
   }
   /** Answers a request the adapter makes of Buzz. */
   answer(method, params) {
-    if (method === "session/request_permission") return { result: permissionAnswer(params) };
+    if (method === "session/request_permission")
+      return { result: permissionAnswer(params, this.permissionMode(params.sessionId)) };
     if (method.startsWith("_") || method.startsWith("auth/")) return { result: {} };
     return { error: { code: -32601, message: `Buzz does not offer ${method}` } };
   }
@@ -375,6 +387,19 @@ async function applyOptions(connection, sessionId, configOptions, wanted) {
   }
   return options;
 }
+function wantedOptions(delivery, settings, defaults) {
+  const synced = delivery.synced ?? {};
+  const effective = defaults.effective(settings);
+  return [
+    ["mode", settings.mode, "mode" in synced],
+    ["model", delivery.model || effective.model, !delivery.model && Boolean(settings.model) && "model" in synced],
+    [
+      "effort",
+      delivery.effort || (delivery.model ? "default" : effective.effort),
+      !delivery.effort && Boolean(settings.effort) && "effort" in synced
+    ]
+  ];
+}
 function outcomeOf(stopReason) {
   if (stopReason === "cancelled") return STOPPED;
   if (stopReason === "refusal") return { ok: false, error: "Claude declined to continue this turn." };
@@ -413,6 +438,7 @@ var Conversation = class {
     this.pumping = false;
     this.steering = Promise.resolve();
     this.idleTimer = void 0;
+    this.mode = void 0;
     this.used = record?.at ?? 0;
   }
   get busy() {
@@ -506,7 +532,7 @@ var Conversation = class {
         this.starting = item;
         this.agent.changed();
         const result = await this.runTurn(item).catch(
-          (error) => this.agent.disposed || this.connection?.stopped ? STOPPED : { ok: false, error: errorText(error) }
+          (error) => this.agent.disposed ? STOPPED : { ok: false, error: errorText(error) }
         );
         this.starting = void 0;
         item.resolve(result);
@@ -523,13 +549,8 @@ var Conversation = class {
     const { delivery, conversation, settings } = item;
     await this.open(delivery, conversation, settings);
     if (item.stopped) return STOPPED;
-    const synced = delivery.synced ?? {};
-    const effective = this.agent.defaults.effective(settings);
-    this.options = await applyOptions(this.connection, this.record.sessionId, this.options, [
-      ["mode", settings.mode, "mode" in synced],
-      ["model", delivery.model || effective.model, !delivery.model && "model" in synced],
-      ["effort", delivery.effort || (delivery.model ? "default" : effective.effort), !delivery.effort && "effort" in synced]
-    ]);
+    this.options = await applyOptions(this.connection, this.record.sessionId, this.options, wantedOptions(delivery, settings, this.agent.defaults));
+    this.mode = settings.mode;
     if (item.stopped) return STOPPED;
     const before = this.record.cursor;
     const prompt = await this.agent.kit.turnPrompt(delivery, conversation, this.cursorOption());
@@ -559,8 +580,9 @@ var Conversation = class {
       }
       if (sessionLost(error, connection)) this.lose();
       if (this.agent.disposed || connection.stopped) result = STOPPED;
-      else if (!turn.updated && !retried && sessionLost(error, connection)) {
+      else if (!turn.updated && !retried && turn.receipts.length === 1 && sessionLost(error, connection)) {
         this.turn = void 0;
+        this.starting = item;
         turn.finish({ ok: true });
         return this.runTurn(item, true);
       } else result = { ok: false, error: errorText(error) };
@@ -586,10 +608,22 @@ var Conversation = class {
     const cwd = await this.agent.workspace(settings);
     this.handler = this.agent.tools(agentHandle, conversation, cwd);
     const shape = sessionShape(settings);
-    if (this.live && this.connection === connection && this.record?.shape === shape) return;
+    if (this.live && this.connection === connection && this.record?.shape === shape) {
+      this.agent.opened(this);
+      return;
+    }
     await this.close();
     if (this.record?.shape !== void 0 && this.record.shape !== shape) this.forget();
     await this.agent.makeRoom(this);
+    this.agent.opened(this);
+    try {
+      await this.start(delivery, settings, connection, cwd, shape);
+    } catch (error) {
+      this.lose();
+      throw error;
+    }
+  }
+  async start(delivery, settings, connection, cwd, shape) {
     const mcp = await this.agent.host.serveMcp((message) => this.answerMcp(message));
     this.mcp = mcp;
     void mcp.closed?.then(() => {
@@ -604,7 +638,8 @@ var Conversation = class {
     let opened;
     if (this.record?.sessionId && connection.sessionCapabilities.resume)
       opened = await connection.request("session/resume", { sessionId: this.record.sessionId, ...params }, START_TIMEOUT_MS).catch((error) => {
-        console.warn("claude-acp: could not resume the session; starting a new one", error);
+        if (connection.closed || !(error?.code === -32002 || /not found/i.test(errorText(error)))) throw error;
+        console.warn("claude-acp: the saved session is gone; starting a new one", error);
         return void 0;
       });
     if (!opened) {
@@ -618,7 +653,6 @@ var Conversation = class {
     this.options = opened.configOptions;
     this.unsubscribe = connection.onSession(this.record.sessionId, (update) => this.update(update));
     this.live = true;
-    this.agent.opened(this);
     this.save();
   }
   answerMcp(message) {
@@ -659,6 +693,7 @@ var Conversation = class {
     void mcp?.close().catch(() => {
     });
     this.agent.closed(this);
+    if (!this.busy) this.agent.idle();
   }
   /** Closes the session and its MCP server, keeping the record so the next
    * turn resumes it. */
@@ -699,7 +734,8 @@ var Conversation = class {
       }
     }
     if (this.starting && (!item || this.starting === item)) this.starting.stopped = true;
-    if (this.turn && this.live) this.connection.notify("session/cancel", { sessionId: this.record.sessionId });
+    if (this.turn && this.record && this.connection && !this.connection.closed)
+      this.connection.notify("session/cancel", { sessionId: this.record.sessionId });
   }
   /** Stops everything: the running turn and every queued message. */
   interrupt() {
@@ -709,12 +745,14 @@ var Conversation = class {
   }
   /** Ends the session for good; the next message starts a new one. */
   async reset() {
-    const turn = this.turn;
+    const pending = [this.turn?.done, this.starting?.done].filter(Boolean);
     this.interrupt();
-    if (turn) await Promise.race([turn.done, new Promise((resolve) => setTimeout(resolve, SETTLE_MS))]);
+    if (pending.length)
+      await Promise.race([Promise.all(pending), new Promise((resolve) => setTimeout(resolve, SETTLE_MS))]);
     await this.close();
     this.forget();
     this.agent.changed();
+    this.agent.idle();
   }
   /** Compacts the session's history to free context. */
   async compact() {
@@ -766,6 +804,8 @@ var AgentRuntime = class {
     });
     this.connection = void 0;
     this.connecting = void 0;
+    this.standalone = /* @__PURE__ */ new Map();
+    this.starting = 0;
     this.disposed = false;
   }
   /** The conversation for `key`, with the session it saved, if any. */
@@ -800,7 +840,11 @@ var AgentRuntime = class {
     if (this.connection && !this.connection.closed) return this.connection;
     this.connecting ??= (async () => {
       const cwd = await this.workspace(settings);
-      const connection = await AcpConnection.start(this.host, { cwd, agent: agentHandle });
+      const connection = await AcpConnection.start(this.host, {
+        cwd,
+        agent: agentHandle,
+        permissionMode: (sessionId) => this.modeOf(sessionId)
+      });
       if (this.disposed) {
         void connection.stop();
         throw new Error(REMOVED);
@@ -827,10 +871,17 @@ var AgentRuntime = class {
     const read = this.host.readFile && ((path) => this.host.readFile(path, { cwd }));
     return this.kit.tools(agentHandle, conversation, read ? { read } : void 0);
   }
-  /** Stops the process once no conversation has a session open in it. */
+  /** The permission mode of the session `sessionId` runs in, if known. */
+  modeOf(sessionId) {
+    if (this.standalone.has(sessionId)) return this.standalone.get(sessionId);
+    for (const conversation of this.conversations.values())
+      if (conversation.record?.sessionId === sessionId) return conversation.mode;
+    return void 0;
+  }
+  /** Stops the process once nothing has a session open in it. */
   idle() {
     const open = [...this.conversations.values()].some((conversation) => conversation.live || conversation.busy);
-    if (!open && !this.connecting) void this.connection?.stop();
+    if (!open && !this.standalone.size && !this.starting && !this.connecting) void this.connection?.stop();
   }
   // --- saved sessions
   save(conversation) {
@@ -889,6 +940,7 @@ var AgentRuntime = class {
     let mcp;
     let sessionId;
     let unsubscribe;
+    this.starting += 1;
     try {
       connection = await this.connect(agentHandle, settings);
       const cwd = await this.workspace(settings);
@@ -897,6 +949,8 @@ var AgentRuntime = class {
       const system = await this.kit.systemPrompt(delivery, { scope: settings.scope, cwd, instructions: settings.instructions });
       const created = await connection.request("session/new", sessionParams(cwd, mcp, system), START_TIMEOUT_MS);
       sessionId = created.sessionId;
+      this.standalone.set(sessionId, settings.mode);
+      this.starting -= 1;
       let last = "";
       unsubscribe = connection.onSession(sessionId, (update) => {
         const step = stepOf(update);
@@ -905,13 +959,7 @@ var AgentRuntime = class {
         last = label;
         delivery.step?.(step.tool, step.target);
       });
-      const synced = delivery.synced ?? {};
-      const effective = this.defaults.effective(settings);
-      await applyOptions(connection, sessionId, created.configOptions, [
-        ["mode", settings.mode, "mode" in synced],
-        ["model", effective.model, "model" in synced],
-        ["effort", effective.effort, "effort" in synced]
-      ]);
+      await applyOptions(connection, sessionId, created.configOptions, wantedOptions(delivery, settings, this.defaults));
       const text = await prompt();
       if (text === void 0) return { ok: true };
       if (signal.aborted) return { ok: false, error: "The turn was stopped before it started" };
@@ -930,6 +978,7 @@ var AgentRuntime = class {
     } catch (error) {
       return { ok: false, error: errorText(error) };
     } finally {
+      if (!this.standalone.delete(sessionId)) this.starting -= 1;
       unsubscribe?.();
       if (sessionId && connection && !connection.closed && connection.sessionCapabilities.close)
         void connection.request("session/close", { sessionId }, CLOSE_TIMEOUT_MS).catch(() => {
@@ -1246,8 +1295,7 @@ var Runtime = class {
     while (this.live.size >= MAX_LIVE_SESSIONS) {
       const idle = [...this.live].find((conversation) => conversation !== opening && !conversation.busy);
       if (!idle) return;
-      await idle.close();
-      idle.agent.idle();
+      void idle.close();
     }
   }
   // --- views
@@ -1450,9 +1498,9 @@ function AgentInstructions({ value, disabled, onChange, creation = false }) {
     }
   ));
 }
-function SaveButton({ form, saving, visible }) {
+function SaveButton({ form, saving, visible, disabled = false }) {
   if (!visible && !saving) return null;
-  return /* @__PURE__ */ h("div", null, /* @__PURE__ */ h(Button, { type: "submit", form, variant: "prominent", loading: saving }, saving ? "Saving\u2026" : "Save"));
+  return /* @__PURE__ */ h("div", null, /* @__PURE__ */ h(Button, { type: "submit", form, variant: "prominent", loading: saving, disabled }, saving ? "Saving\u2026" : "Save"));
 }
 var stack = (gap = "var(--space-4)") => ({ display: "grid", gap, minWidth: 0 });
 var row = { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--space-2)", maxWidth: "100%" };
@@ -1940,23 +1988,53 @@ var providerOf = () => ({
 
 // src/ui/settings.jsx
 var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+var LABELS = {
+  model: "Model",
+  effort: "Thinking",
+  instructions: "Instructions",
+  workspace: "Workspace",
+  scope: "Sessions",
+  mode: "Permissions"
+};
+var shown = (key, value) => key === "scope" ? SCOPES.find(([id]) => id === value)?.[1] : key === "mode" ? MODES.find(([id]) => id === value)?.[1] : value || (key === "instructions" ? "No instructions" : "Default");
 function useDraft(saved) {
-  const [draft, setDraft] = useState(saved);
+  const [state, setState] = useState({ draft: saved, latest: saved, conflicts: [] });
   const opened = useRef(saved);
   useEffect(() => {
     const prior = opened.current;
     if (same(prior, saved)) return;
     opened.current = saved;
-    setDraft(
-      (current) => Object.fromEntries(Object.keys(saved).map((key) => [key, same(current[key], prior[key]) ? saved[key] : current[key]]))
-    );
+    setState(({ draft, conflicts }) => {
+      const found = new Set(conflicts);
+      const next = {};
+      for (const key of Object.keys(saved)) {
+        if (same(draft[key], prior[key])) next[key] = saved[key];
+        else {
+          next[key] = draft[key];
+          if (!same(saved[key], prior[key]) && !same(draft[key], saved[key])) found.add(key);
+        }
+      }
+      return { draft: next, latest: saved, conflicts: [...found] };
+    });
   }, [JSON.stringify(saved)]);
-  return [draft, setDraft];
+  return {
+    ...state,
+    setDraft: (draft) => setState((current) => ({ ...current, draft })),
+    resolve: (key, useLatest) => setState((current) => ({
+      ...current,
+      draft: useLatest ? { ...current.draft, [key]: current.latest[key] } : current.draft,
+      conflicts: current.conflicts.filter((item) => item !== key)
+    }))
+  };
+}
+function Conflict({ field, latest, draft, resolve, disabled }) {
+  return /* @__PURE__ */ h("fieldset", { "aria-label": `${LABELS[field]} conflict`, style: { ...stack("var(--space-2)"), margin: 0, padding: "var(--space-3) 0", border: 0 } }, /* @__PURE__ */ h("p", { role: "alert", className: "text-body-sm text-warning", style: { margin: 0 } }, LABELS[field], " changed elsewhere. Choose which changes to keep."), /* @__PURE__ */ h("div", { className: "text-body-sm", style: { overflowWrap: "anywhere" } }, /* @__PURE__ */ h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, "Latest: ", shown(field, latest[field])), /* @__PURE__ */ h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, "Yours: ", shown(field, draft[field]))), /* @__PURE__ */ h("div", { style: row }, /* @__PURE__ */ h(Button, { disabled, onClick: () => resolve(field, true) }, "Use latest"), /* @__PURE__ */ h(Button, { disabled, onClick: () => resolve(field, false) }, "Keep mine")));
 }
 function SettingsTab({ agent, save, settingsHost, settingsSection, settingsContent }) {
   const form = useId();
   const saved = readConfig(agent.config);
-  const [draft, setDraft] = useDraft(saved);
+  const { draft, latest, conflicts, setDraft, resolve } = useDraft(saved);
+  const unavailable = Boolean(agent.configProblem) && !settingsHost?.pendingSave;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const errorRef = useRef(null);
@@ -1967,7 +2045,7 @@ function SettingsTab({ agent, save, settingsHost, settingsSection, settingsConte
   const configChanged = !same(draft, saved);
   const changed = configChanged || Boolean(settingsHost?.pendingSave);
   const submit = async () => {
-    if (saving || !changed) return;
+    if (saving || !changed || conflicts.length || unavailable) return;
     const next = readConfig(draft);
     setDraft(next);
     setSaving(true);
@@ -1991,7 +2069,8 @@ function SettingsTab({ agent, save, settingsHost, settingsSection, settingsConte
       }
     },
     error && /* @__PURE__ */ h("p", { ref: errorRef, tabIndex: -1, role: "alert", className: "buzz-field-error" }, error),
-    settingsSection !== "runtime" && /* @__PURE__ */ h(Fragment, null, /* @__PURE__ */ h(SettingsGroup, null, settingsHost?.typeControl?.(configChanged) ?? null, /* @__PURE__ */ h(ModelSelect, { catalog, current: draft, onChange: setDraft, variant: "preference", align: "start" }), /* @__PURE__ */ h(ThinkingSelect, { catalog, current: draft, onChange: setDraft, variant: "preference" })), catalog.error && /* @__PURE__ */ h("div", { style: row }, /* @__PURE__ */ h("span", { role: "alert", className: "text-body-sm text-danger" }, catalog.error), /* @__PURE__ */ h(Button, { size: "sm", loading: catalog.loading, onClick: catalog.retry }, "Try again")), /* @__PURE__ */ h("div", { style: stack("var(--space-2)") }, /* @__PURE__ */ h(
+    unavailable && /* @__PURE__ */ h("p", { className: "text-body-sm text-muted", style: { margin: 0 } }, "Your edits stay in this form. You can save them when configuration is available again."),
+    settingsSection !== "runtime" && /* @__PURE__ */ h(Fragment, null, ["model", "effort"].filter((field) => conflicts.includes(field)).map((field) => /* @__PURE__ */ h(Conflict, { key: field, field, latest, draft, resolve, disabled: saving })), /* @__PURE__ */ h(SettingsGroup, null, settingsHost?.typeControl?.(configChanged) ?? null, /* @__PURE__ */ h(ModelSelect, { catalog, current: draft, onChange: setDraft, variant: "preference", align: "start" }), /* @__PURE__ */ h(ThinkingSelect, { catalog, current: draft, onChange: setDraft, variant: "preference" })), catalog.error && /* @__PURE__ */ h("div", { style: row }, /* @__PURE__ */ h("span", { role: "alert", className: "text-body-sm text-danger" }, catalog.error), /* @__PURE__ */ h(Button, { size: "sm", loading: catalog.loading, onClick: catalog.retry }, "Try again")), /* @__PURE__ */ h("div", { style: stack("var(--space-2)") }, conflicts.includes("instructions") && /* @__PURE__ */ h(Conflict, { field: "instructions", latest, draft, resolve, disabled: saving }), /* @__PURE__ */ h(
       AgentInstructions,
       {
         value: draft.instructions,
@@ -1999,7 +2078,7 @@ function SettingsTab({ agent, save, settingsHost, settingsSection, settingsConte
         onChange: (instructions) => setDraft({ ...draft, instructions })
       }
     ))),
-    settingsSection !== "identity" && /* @__PURE__ */ h(Fragment, null, /* @__PURE__ */ h("div", { style: stack("var(--space-2)") }, /* @__PURE__ */ h(Field, { label: "Workspace", description: "The folder Claude works in. Use ~/ for your home folder." }, (control) => /* @__PURE__ */ h(
+    settingsSection !== "identity" && /* @__PURE__ */ h(Fragment, null, ["workspace", "scope", "mode"].filter((field) => conflicts.includes(field)).map((field) => /* @__PURE__ */ h(Conflict, { key: field, field, latest, draft, resolve, disabled: saving })), /* @__PURE__ */ h("div", { style: stack("var(--space-2)") }, /* @__PURE__ */ h(Field, { label: "Workspace", description: "The folder Claude works in. Use ~/ for your home folder." }, (control) => /* @__PURE__ */ h(
       Input,
       {
         ...control,
@@ -2028,7 +2107,7 @@ function SettingsTab({ agent, save, settingsHost, settingsSection, settingsConte
         onValueChange: (mode) => setDraft({ ...draft, mode })
       }
     )),
-    /* @__PURE__ */ h(SaveButton, { form, saving, visible: changed }),
+    /* @__PURE__ */ h(SaveButton, { form, saving, visible: changed, disabled: conflicts.length > 0 || unavailable }),
     settingsSection !== "identity" ? settingsContent ?? null : null
   );
 }

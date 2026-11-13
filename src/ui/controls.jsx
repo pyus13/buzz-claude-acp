@@ -128,11 +128,11 @@ export function AgentInstructions({ value, disabled, onChange, creation = false 
 
 /** Buzz's agent save button where the panel's footer is out of a plugin's
  * reach: inline, shown only while there is something to save. */
-export function SaveButton({ form, saving, visible }) {
+export function SaveButton({ form, saving, visible, disabled = false }) {
   if (!visible && !saving) return null;
   return (
     <div>
-      <Button type="submit" form={form} variant="prominent" loading={saving}>
+      <Button type="submit" form={form} variant="prominent" loading={saving} disabled={disabled}>
         {saving ? "Saving…" : "Save"}
       </Button>
     </div>
@@ -142,4 +142,3 @@ export function SaveButton({ form, saving, visible }) {
 export const stack = (gap = "var(--space-4)") => ({ display: "grid", gap, minWidth: 0 });
 export const row = { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--space-2)", maxWidth: "100%" };
 
-export { Fragment };

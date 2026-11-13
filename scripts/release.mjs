@@ -80,7 +80,7 @@ writeFileSync(
 
 ## Install
 
-- **From GitHub, in Buzz:** Settings → Plugins → Manage plugins → Add → *Git or GitHub repository*: this repository, tag \`v${version}\`.
+- **From GitHub, in Buzz:** Settings → Plugins → Manage plugins → Add → *Git or GitHub repository*: this repository, tag \`v${version}\`, folder \`plugin\`.
 - **From this release, in Buzz:** *Add from URL* with the \`${artifactName}\` asset's link and SHA-256 \`${artifactSum}\`.
 - **From a folder:** unzip \`${zipName}\` and choose its \`plugin\` folder with *Browse*.
 
@@ -90,4 +90,4 @@ Then install the adapter once: \`sh scripts/install-adapter.sh\` (in the zip, or
 
 for (const name of [artifactName, zipName]) console.log(`dist/${name}  ${(statSync(`${dist}${name}`).size / 1024).toFixed(1)} KB`);
 console.log(`\n${artifactName} SHA-256: ${artifactSum}`);
-console.log(`\nPublish: git tag v${version} && git push origin v${version}, then attach dist/* to the release.`);
+console.log(`\nPublish: git tag v${version} && git push origin v${version}; the Release workflow publishes dist/.`);

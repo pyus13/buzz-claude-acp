@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tests
+        run: npm test
+      - name: plugin/plugin.js matches src/
+        run: npm run check
+      - name: Icons match their sources
+        run: npm run icons -- --check
+      - name: Installer syntax
+        run: sh -n scripts/install-adapter.sh

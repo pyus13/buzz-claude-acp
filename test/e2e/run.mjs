@@ -8,7 +8,7 @@
 //                                 resume, control, once, failure
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -22,11 +22,14 @@ const plugin = await import(`file://${pluginPath}`);
 const log = (...args) => console.log(new Date().toISOString().slice(11, 19), ...args);
 const expand = (path) => (path.startsWith("~/") ? join(homedir(), path.slice(2)) : path);
 
+// The adapter as Buzz starts it: the manifest's process, npx and its args.
+const manifest = JSON.parse(readFileSync(fileURLToPath(new URL("../../plugin/manifest.json", import.meta.url)), "utf8"));
+const declared = manifest.host.processes.find((process) => process.id === "claude");
 const adapter = (() => {
   try {
-    return execFileSync("sh", ["-c", `PATH="$HOME/.local/bin:$PATH" command -v buzz-claude-acp`]).toString().trim();
+    return execFileSync("sh", ["-c", `command -v ${declared.program}`]).toString().trim();
   } catch {
-    console.error("buzz-claude-acp is not installed: run sh scripts/install-adapter.sh");
+    console.error(`${declared.program} was not found: install Node.js 22 or later`);
     process.exit(1);
   }
 })();
@@ -41,7 +44,7 @@ const host = {
       if (value === null) delete env[key];
       else env[key] = value;
     }
-    const child = spawn(adapter, options.args ?? [], {
+    const child = spawn(adapter, [...declared.args, ...(options.args ?? [])], {
       cwd: options.cwd ? expand(options.cwd) : undefined,
       env,
       stdio: ["pipe", "pipe", "pipe"],

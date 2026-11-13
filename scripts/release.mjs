@@ -62,7 +62,6 @@ run("zip", [
   "plugin/plugin.js",
   "plugin/icon.png",
   "plugin/README.md",
-  "scripts/install-adapter.sh",
   "README.md",
   "LICENSE",
 ]);
@@ -84,7 +83,7 @@ writeFileSync(
 - **From this release, in Buzz:** *Add from URL* with the \`${artifactName}\` asset's link and SHA-256 \`${artifactSum}\`.
 - **From a folder:** unzip \`${zipName}\` and choose its \`plugin\` folder with *Browse*.
 
-Then install the adapter once: \`sh scripts/install-adapter.sh\` (in the zip, or this repository).
+Each computer needs Node.js 22 or later and a Claude login (\`claude auth login\`). The plugin downloads the pinned adapter itself on first use.
 `,
 );
 

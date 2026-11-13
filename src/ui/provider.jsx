@@ -77,7 +77,7 @@ export function ProviderDialogBody({ onClose }) {
           <strong>{line}</strong>
         </p>
         <p className="text-body-sm text-subtle" style={{ margin: 0 }}>
-          {TITLE} runs Claude Code through buzz-claude-acp with the claude login on this computer. Change accounts with
+          {TITLE} runs Claude Code through the Claude ACP adapter with the claude login on this computer. Change accounts with
           claude auth login in a terminal.
         </p>
       </div>

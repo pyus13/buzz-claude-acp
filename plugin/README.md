@@ -1,29 +1,26 @@
 # Claude (ACP)
 
-Run agents on Claude Code, signed in with your own Claude account, through the Agent
-Client Protocol. Pick **Claude (ACP)** as an agent's Harness and mention it in a
-conversation.
+Run agents on Claude Code with your own Claude account. No API key.
 
-## Before you start, on each computer
+## Before you start
 
-Buzz installs this plugin, not the adapter it runs. In Terminal, run once:
+On each computer, install [Node.js 22+](https://nodejs.org) and
+[Claude Code](https://claude.com/claude-code), then sign in once:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh
+claude auth login
 ```
 
-It needs Node.js 20 or later. Then sign in to Claude once with `claude auth login`
-(from [Claude Code](https://claude.com/claude-code)), and press **Check again** in
-Settings → Agent setup.
+The plugin downloads its adapter by itself the first time it runs.
 
 ## Settings
 
-- **Model** and **Thinking**: Claude's models and effort levels for your account.
-  Blank follows the default in Settings → Agent setup.
-- **Instructions**: what the agent does.
-- **Workspace**: the folder Claude works in.
-- **Sessions**: one Claude session per thread, or per channel.
-- **Permissions**: Claude Code's permission mode. *Bypass permissions* runs every
-  tool without asking.
+- **Model, Thinking:** your account's models. *Default* follows Settings → Agent setup.
+- **Instructions:** what the agent does.
+- **Workspace:** the folder Claude works in.
+- **Sessions:** one Claude session per thread, or per channel.
+- **Permissions:** *Bypass* runs every tool without asking. *Plan* only posts a plan.
 
-Activity and usage come from Buzz's own Claude plugin, which must be turned on.
+Activity and usage come from Buzz's built-in **Claude** plugin, which must be turned on.
+
+More: [github.com/pyus13/buzz-claude-acp](https://github.com/pyus13/buzz-claude-acp)

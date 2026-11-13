@@ -11,6 +11,7 @@ describe("AcpConnection", () => {
     const connection = await AcpConnection.start(host, { cwd: "/w" });
     expect(host.spawned[0].id).toBe("claude");
     expect(host.spawned[0].options.env.ANTHROPIC_API_KEY).toBeNull();
+    expect(host.spawned[0].options.env.npm_config_update_notifier).toBe("false");
     expect(host.spawned[0].options.agentCredential).toBeUndefined();
     expect(connection.canSteer).toBe(true);
     expect(connection.sessionCapabilities.close).toEqual({});
@@ -40,7 +41,7 @@ describe("AcpConnection", () => {
   it("explains a missing adapter", async () => {
     const host = { spawn: async () => Promise.reject(new Error("program not found")) };
     await expect(AcpConnection.start(host, { cwd: "/w" })).rejects.toThrow(
-      /needs its adapter on this computer\. In Terminal, run: curl -fsSL https:\/\/raw\.githubusercontent\.com\/pyus13\/buzz-claude-acp\/main\/scripts\/install-adapter\.sh \| sh/,
+      /needs Node\.js 22 or later on this computer\. Install it from https:\/\/nodejs\.org/,
     );
   });
 
@@ -98,5 +99,48 @@ describe("AcpConnection", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("starting through npx", () => {
+  /** A host whose first `failures` starts print `stderr` and exit, as npx
+   * does when npm can't fetch the adapter. */
+  function npxHost(failures, stderr) {
+    const starts = [];
+    return {
+      starts,
+      spawn: async (id, options) => {
+        starts.push(options.env);
+        if (starts.length <= failures) {
+          let exit;
+          const exited = new Promise((resolve) => (exit = resolve));
+          setTimeout(() => {
+            options.onStderr(stderr);
+            exit(1);
+          }, 1);
+          return { exited, write: async () => {}, kill: async () => exit(null) };
+        }
+        return fakeAdapter({ initialize: () => initialized }).attach(options);
+      },
+    };
+  }
+
+  it("starts from npm's cache", async () => {
+    const host = npxHost(0, "");
+    await AcpConnection.start(host, { cwd: "/w" });
+    expect(host.starts).toHaveLength(1);
+    expect(host.starts[0].npm_config_prefer_offline).toBe("true");
+  });
+
+  it("asks the registry once when the cache predates the pinned version", async () => {
+    const host = npxHost(1, "npm error code ETARGET\nnpm error notarget No matching version found for @agentclientprotocol/claude-agent-acp@0.106.0.\n");
+    await AcpConnection.start(host, { cwd: "/w" });
+    expect(host.starts.map((env) => env.npm_config_prefer_offline)).toEqual(["true", "false"]);
+  });
+
+  it("says so plainly when it can't reach the registry", async () => {
+    const host = npxHost(2, "npm error code ENOTFOUND\nnpm error network request to https://registry.npmjs.org failed\n");
+    await expect(AcpConnection.start(host, { cwd: "/w" })).rejects.toThrow(/can't reach the npm registry\. Connect once; after that it starts offline/);
+    expect(host.starts).toHaveLength(1);
   });
 });

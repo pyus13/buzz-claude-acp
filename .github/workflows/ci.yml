@@ -24,5 +24,5 @@ jobs:
         run: npm run check
       - name: Icons match their sources
         run: npm run icons -- --check
-      - name: Installer syntax
-        run: sh -n scripts/install-adapter.sh
+      - name: The manifest pins the adapter
+        run: node -e "const p=require('./plugin/manifest.json').host.processes[0]; if (p.program!=='npx' || !/@\d+\.\d+\.\d+$/.test(p.args.at(-1))) process.exit(1)"

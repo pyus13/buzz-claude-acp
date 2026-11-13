@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.0
+
+- **No install step.** The plugin starts the pinned Claude ACP adapter with `npx`,
+  which downloads it on first use and runs it from npm's cache after. A computer
+  needs only Node.js 22 or later and a Claude login. `scripts/install-adapter.sh` is
+  gone.
+- **Starts fast and offline:** the adapter runs from npm's cache. A cache older than the
+  pinned release is noticed and refreshed once, automatically.
+- **Plain messages** when Node.js is missing or npm can't reach the registry, with what
+  to do.
+- **A calmer README** with a three-step quick start.
+- Updating to this version asks you to review the plugin's access again: it now
+  starts `npx` instead of `buzz-claude-acp`.
+
 ## 1.0.1
 
 - **One-line adapter install** for each computer, no clone needed:

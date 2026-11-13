@@ -1,131 +1,104 @@
-# Claude (ACP) for Buzz
+<p align="center">
+  <img src="plugin/icon.png" width="96" alt="">
+</p>
 
-A [Buzz](https://github.com/block/buzz-app) plugin that adds **Claude (ACP)** to the
-Harness picker: agents that run on **Claude Code with your own Claude account**, no API
-key, through the [Agent Client Protocol](https://agentclientprotocol.com) adapter
-[`@agentclientprotocol/claude-agent-acp`](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp).
+<h1 align="center">Claude (ACP) for Buzz</h1>
 
-It works like Buzz's own Claude: mentions, Attention wakes, watches and timers, every
-Buzz tool, Model and Thinking pickers, steering a running turn, Stop, Start a new
-session, Compact, sessions that resume across restarts, Activity and usage.
+<p align="center">
+  Run your <a href="https://github.com/block/buzz-app">Buzz</a> agents on Claude Code with your own Claude account. No API key.
+</p>
 
-> Running Claude with your personal login inside a third-party app may not be allowed
-> on every Claude plan. Check Anthropic's current terms for yours.
+---
 
-## Install
+## Quick start
 
-Each computer needs **three things**. Buzz installs only the plugin, never the
-adapter it runs, so do step 1 on every computer you use it on.
+1. **On your computer:** install [Node.js 22+](https://nodejs.org) and [Claude Code](https://claude.com/claude-code), then sign in once:
 
-You need Buzz desktop (macOS or Linux, November 2026 or later), Node.js 20+
-([nodejs.org](https://nodejs.org)), and [Claude Code](https://claude.com/claude-code)
-signed in once with `claude auth login`.
+   ```sh
+   claude auth login
+   ```
 
-**1. Install the adapter.** In Terminal:
+2. **In Buzz:** Settings → Plugins → Manage plugins → **Add** → *Git or GitHub repository*
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh
-```
+   | Field | Value |
+   |---|---|
+   | Repository | `pyus13/buzz-claude-acp` |
+   | Folder | `plugin` |
 
-It installs a pinned adapter under `~/.local/share/buzz-claude-acp`, writes
-`~/.local/bin/buzz-claude-acp`, and checks that it answers. Run it again to repair or
-update. From a clone, `sh scripts/install-adapter.sh` does the same, and `--check` only
-checks.
+3. **Create an agent** with Harness **Claude (ACP)** and mention it.
 
-**2. Add the plugin to Buzz:** Settings → Plugins → Manage plugins → **Add**, then one of:
+The plugin downloads its adapter by itself the first time it runs.
 
-| Option | What to enter |
-|---|---|
-| **Git or GitHub repository** | `pyus13/buzz-claude-acp`. Branch or tag: a release tag like `v1.0.0`, or blank for the latest. Folder: `plugin`. |
-| **From URL** | The release's `claude-acp-<version>.plugin.json` link and its SHA-256 from `SHA256SUMS`. |
-| **From folder** | **Browse** to this repository's `plugin` folder. |
+## What you get
 
-**3. Use it:** New agent → Create a new agent → Harness **Claude (ACP)**, then mention
-the agent in a conversation. Settings → Agent setup shows the sign-in and a default
-model for this device.
-
-If you skipped step 1, the agent and Settings → Agent setup say "Claude (ACP) needs its
-adapter on this computer" with the command above. Run it, then press **Check again**.
-
-**Updating:** open the plugin in Settings → Plugins and choose **Update**. Rerun the
-installer when a release changes the adapter version.
+- Mentions, wakes, watches and timers, with every Buzz tool
+- Model and thinking pickers, steering, Stop, new session and compact
+- Sessions that resume after a restart
+- Activity and usage, through Buzz's built-in Claude plugin
 
 ## Settings
 
-- **Model, Thinking:** your account's models; *Default* follows Settings → Agent setup.
-- **Instructions:** what the agent does. Changing them starts new sessions.
-- **Workspace:** the folder Claude works in (default `~/.buzz`).
-- **Sessions:** one Claude session per thread, or per channel.
-- **Permissions:** Claude Code's mode. *Bypass permissions*, the default, runs every tool
-  without asking. *Plan* posts a plan and changes nothing.
+| Setting | What it does |
+|---|---|
+| **Model**, **Thinking** | Your account's models. *Default* follows Settings → Agent setup. |
+| **Instructions** | What the agent does. |
+| **Workspace** | The folder Claude works in. Default `~/.buzz`. |
+| **Sessions** | One Claude session per thread, or per channel. |
+| **Permissions** | *Bypass* runs every tool without asking (default). *Plan* only posts a plan. |
 
-Activity and usage come from Buzz's built-in **Claude** plugin, which must be turned on.
-It needs no API key.
+## Troubleshooting
 
-## Icons
+| You see | Do this |
+|---|---|
+| *needs Node.js 22 or later* | Install [Node.js](https://nodejs.org), then **Check again** in Settings → Agent setup. |
+| *Sign in to Claude* | Run `claude auth login`, then **Check again**. |
+| *can't reach the npm registry* | Connect to the internet once. After that it starts offline. |
+| *could not finish: …* | The text after the colon is Claude's own error. |
+| Activity asks for Buzz's Claude plugin | Turn on **Claude** in Settings → Plugins. It needs no API key. |
 
-| File | Where Buzz shows it | Source |
-|---|---|---|
-| `src/assets/harness-mark.svg` | Beside "Claude (ACP)" in the Harness picker, Agent setup and harness changes | `tools/icon/harness-mark.mjs` |
-| `plugin/icon.png` | Settings → Plugins tile | `tools/icon/list-glyph.mjs`, `list-tile.mjs` |
+<details>
+<summary><b>Other ways to install</b></summary>
 
-`npm run icons` redraws both; `npm run icons -- --check` verifies the committed files.
-Buzz versions before installed-plugin icons
-([block/buzz-app#2698](https://github.com/block/buzz-app/pull/2698)) show a placeholder
-tile in Settings → Plugins; the harness mark shows everywhere.
+- **From a release:** *Add from URL* with the release's `claude-acp-<version>.plugin.json` and its SHA-256 from `SHA256SUMS`.
+- **From a folder:** clone this repository, then *Browse* to its `plugin` folder.
+- **A fixed version:** put a release tag, like `v1.1.0`, in *Branch or tag*.
 
-## Build
+To update, open the plugin in Settings → Plugins and choose **Update**.
+
+</details>
+
+<details>
+<summary><b>Develop</b></summary>
 
 ```sh
 npm install
-npm test           # unit, runtime and UI tests (no Claude needed)
-npm run build      # bundles src/ into plugin/plugin.js
-npm run check      # fails if plugin/plugin.js is out of date
-npm run test:e2e   # real adapter and your Claude login; a few turns
-npm run release    # dist/: artifact, zip, SHA256SUMS, release notes
+npm test           # unit, runtime and UI tests
+npm run build      # src/ → plugin/plugin.js
+npm run test:e2e   # real Claude, a few turns
+npm run icons      # redraw the icons
+npm run release    # dist/ for a GitHub release
 ```
 
-Buzz loads one self-contained file, so `src/` (ES modules, classic JSX with `h`) is
-bundled by esbuild into `plugin/plugin.js`, which is committed so Git installs need no
-build. Never edit `plugin/plugin.js` by hand.
+`src/` is bundled into the one file Buzz loads, `plugin/plugin.js`, which is committed so
+GitHub installs need no build. Edit `src/`, never the bundle.
 
 | Path | Owns |
 |---|---|
-| `src/index.js` | What the plugin registers with Buzz. |
-| `src/config.js` | Agent settings: reading, syncing, moving between harnesses. |
-| `src/acp/` | The adapter process (`connection.js`) and protocol details (`protocol.js`). |
-| `src/runtime/` | Agents (`agent.js`), conversations and turns (`conversation.js`), saved sessions (`records.js`), models and sign-in (`catalog.js`), device defaults (`defaults.js`). |
-| `src/ui/` | Views that mirror Buzz's own components so its stylesheet styles them. |
+| `src/index.js` | What the plugin registers with Buzz |
+| `src/config.js` | Agent settings, sync and harness changes |
+| `src/acp/` | The adapter process and protocol |
+| `src/runtime/` | Agents, conversations, sessions, models, defaults |
+| `src/ui/` | Views built from Buzz's own components |
+| `tools/icon/` | Icon sources |
 
-## Release
+**Releasing:** bump `version` in `package.json`, add a `CHANGELOG.md` entry, then push a
+`vX.Y.Z` tag. The Release workflow publishes it.
 
-1. Update `version` in `package.json` and add a section to `CHANGELOG.md`.
-2. `npm run build && npm test`, commit.
-3. `git tag vX.Y.Z && git push origin main vX.Y.Z`. The Release workflow builds
-   `dist/` and publishes the GitHub release with its files and install notes.
+</details>
 
-## Fix things
+## Notes
 
-| Symptom | Fix |
-|---|---|
-| "Claude (ACP) needs its adapter on this computer", or "Could not start buzz-claude-acp" | Run the installer from step 1 on that computer, then **Check again**. |
-| Agent setup says "Sign in to Claude" | Run `claude auth login`, then **Check again**. |
-| "Claude (ACP) could not finish: …" | The text after the colon is Claude's or the adapter's error. |
-| A conversation seems stuck | Use **Start a new session** on the conversation. |
-| Activity asks for Buzz's Claude plugin | Turn on **Claude** in Settings → Plugins. |
-| You changed `src/` but Buzz runs old code | `npm run build`, then **Update** the plugin in Buzz. |
+- Using your Claude login in a third-party app may not be allowed on every plan. Check Anthropic's terms.
+- macOS and Linux only. Save-footer docking and Activity's live refresh stay internal to Buzz's own harnesses.
 
-To debug a turn, reproduce it with `npm run test:e2e -- turn`, or add a runtime test with
-the scripted adapter in `test/fake-claude.js`.
-
-## Limits
-
-- Buzz keeps the Save button's footer docking, "Discard changes?" prompts and
-  Activity's live refresh internal to its own harnesses.
-- Security-review agents, remote execution and tool hooks are bundled-harness only.
-- Windows isn't supported: Buzz plugin processes run on macOS and Linux.
-
-## License
-
-MIT. Claude is a trademark of Anthropic. Not affiliated with or endorsed by Anthropic
-or Block.
+<sub>MIT License. Claude is a trademark of Anthropic. Not affiliated with Anthropic or Block.</sub>

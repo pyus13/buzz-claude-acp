@@ -1,11 +1,11 @@
-// Claude (ACP) for Buzz 1.0.1. Built from src/ by scripts/build.mjs; edit the sources, not this file.
+// Claude (ACP) for Buzz 1.1.0. Built from src/ by scripts/build.mjs; edit the sources, not this file.
 
 // src/constants.js
 var TYPE_ID = "claude-acp";
 var TITLE = "Claude (ACP)";
 var PLUGIN_ID = "local.claude-acp";
 var PROCESS = "claude";
-var INSTALL_COMMAND = "curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh";
+var NODE_REQUIRED = "Node.js 22 or later";
 var CLAUDE_TYPE = "buzz.claude-code/claude-code";
 var CLAUDE_SESSIONS = "buzz.claude-code.sessions.v1";
 var MODES = Object.freeze([
@@ -18,7 +18,9 @@ var SCOPES = Object.freeze([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"]
 ]);
-var SCRUBBED_ENV = Object.freeze({
+var ADAPTER_ENV = Object.freeze({
+  npm_config_update_notifier: "false",
+  npm_config_fund: "false",
   ANTHROPIC_API_KEY: null,
   ANTHROPIC_AUTH_TOKEN: null,
   CLAUDECODE: null,
@@ -177,15 +179,29 @@ var lastLines = (text, count = 6) => text.trim().split("\n").slice(-count).join(
 var effortLabel = (id) => id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
 
 // src/acp/connection.js
-var CLIENT_INFO = { name: "buzz-claude-acp", version: true ? "1.0.1" : "dev" };
+var CLIENT_INFO = { name: "buzz-claude-acp", version: true ? "1.1.0" : "dev" };
+var STALE_CACHE = /ETARGET|notarget|No matching version/;
+var OFFLINE = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|network/i;
 var AcpConnection = class _AcpConnection {
   /** Starts the adapter in `cwd` and completes the ACP handshake. With an
    * `agent`, the process carries a Buzz credential that acts as that agent,
-   * so `buzz` commands Claude runs reach the community as it (newer Buzz). */
-  static async start(host, { cwd, agent, permissionMode }) {
+   * so `buzz` commands Claude runs reach the community as it (newer Buzz).
+   *
+   * npx runs the pinned adapter from npm's cache, which is quick and works
+   * offline. A cache older than that release doesn't list it yet; then the
+   * start is tried once more with the registry. */
+  static async start(host, options) {
+    try {
+      return await _AcpConnection.open(host, options, { npm_config_prefer_offline: "true" });
+    } catch (error) {
+      if (!error.staleCache) throw error;
+      return _AcpConnection.open(host, options, { npm_config_prefer_offline: "false" });
+    }
+  }
+  static async open(host, { cwd, agent, permissionMode }, npm) {
     const connection = new _AcpConnection(permissionMode);
     try {
-      await connection.spawn(host, cwd, agent);
+      await connection.spawn(host, cwd, agent, npm);
       if (agent && typeof connection.process.actAs === "function")
         await connection.process.actAs({ pubkey: agent.pubkey, relay: agent.relay }).catch((error) => {
           console.warn("claude-acp: could not bind the agent's credential", error);
@@ -203,8 +219,20 @@ var AcpConnection = class _AcpConnection {
       return connection;
     } catch (error) {
       void connection.stop();
-      throw error;
+      throw connection.startFailure(error);
     }
+  }
+  /** Why the adapter didn't start, in words a person can act on. */
+  startFailure(error) {
+    const said = this.stderr;
+    if (!/npm (error|ERR)/.test(said)) return error;
+    if (STALE_CACHE.test(said)) return Object.assign(new Error(errorText(error)), { staleCache: true });
+    if (OFFLINE.test(said))
+      return new Error(
+        `${TITLE} couldn't download Claude's ACP adapter: this computer can't reach the npm registry. Connect once; after that it starts offline.`
+      );
+    return new Error(`${TITLE} couldn't install Claude's ACP adapter with npm:
+${lastLines(said, 4)}`);
   }
   /** `permissionMode(sessionId)`: the mode a session runs in, which decides
    * how its permission prompts are answered. */
@@ -221,12 +249,12 @@ var AcpConnection = class _AcpConnection {
     this.sessionListeners = /* @__PURE__ */ new Map();
     this.closeListeners = /* @__PURE__ */ new Set();
   }
-  async spawn(host, cwd, agent) {
+  async spawn(host, cwd, agent, npm = {}) {
     let buffer = "";
     try {
       this.process = await host.spawn(PROCESS, {
         cwd,
-        env: SCRUBBED_ENV,
+        env: { ...ADAPTER_ENV, ...npm },
         ...agent ? { agentCredential: true } : {},
         onStdout: (data) => {
           buffer += data;
@@ -243,7 +271,7 @@ var AcpConnection = class _AcpConnection {
     } catch (error) {
       const reason = errorText(error);
       throw new Error(
-        /no such file|not found|os error 2|enoent/i.test(reason) ? `${TITLE} needs its adapter on this computer. In Terminal, run: ${INSTALL_COMMAND}` : `Could not start buzz-claude-acp (${reason}). Reinstall it: ${INSTALL_COMMAND}`
+        /no such file|not found|os error 2|enoent/i.test(reason) ? `${TITLE} needs ${NODE_REQUIRED} on this computer. Install it from https://nodejs.org, then press Check again in Settings \u2192 Agent setup.` : `Could not start Claude's ACP adapter (${reason}).`
       );
     }
     void this.process.exited.then(
@@ -1971,7 +1999,7 @@ function ProviderDialogBody({ onClose }) {
   const ready = catalog.readiness === "ready";
   const checking = catalog.readiness === "checking";
   const line = checking ? "Checking Claude\u2026" : ready ? `Signed in with your Claude account${catalog.account ? ` (${catalog.account})` : ""}.` : catalog.attentionDescription;
-  return /* @__PURE__ */ h("div", { style: stack("var(--space-6)") }, /* @__PURE__ */ h("div", { style: stack("var(--space-2)") }, /* @__PURE__ */ h("p", { role: catalog.readiness === "attention" ? "alert" : "status", className: "text-body-sm text-primary", style: { margin: 0 } }, /* @__PURE__ */ h("strong", null, line)), /* @__PURE__ */ h("p", { className: "text-body-sm text-subtle", style: { margin: 0 } }, TITLE, " runs Claude Code through buzz-claude-acp with the claude login on this computer. Change accounts with claude auth login in a terminal.")), ready && /* @__PURE__ */ h(SettingsGroup, null, /* @__PURE__ */ h(PreferenceRow, { title: "Default model", trailing: /* @__PURE__ */ h(DefaultControl, null) })), /* @__PURE__ */ h("div", { style: { ...row, justifyContent: "flex-end" } }, /* @__PURE__ */ h(Button, { onClick: onClose }, ready ? "Done" : "Cancel"), !ready && /* @__PURE__ */ h(Button, { variant: "prominent", loading: checking, onClick: catalog.retry }, "Check again")));
+  return /* @__PURE__ */ h("div", { style: stack("var(--space-6)") }, /* @__PURE__ */ h("div", { style: stack("var(--space-2)") }, /* @__PURE__ */ h("p", { role: catalog.readiness === "attention" ? "alert" : "status", className: "text-body-sm text-primary", style: { margin: 0 } }, /* @__PURE__ */ h("strong", null, line)), /* @__PURE__ */ h("p", { className: "text-body-sm text-subtle", style: { margin: 0 } }, TITLE, " runs Claude Code through the Claude ACP adapter with the claude login on this computer. Change accounts with claude auth login in a terminal.")), ready && /* @__PURE__ */ h(SettingsGroup, null, /* @__PURE__ */ h(PreferenceRow, { title: "Default model", trailing: /* @__PURE__ */ h(DefaultControl, null) })), /* @__PURE__ */ h("div", { style: { ...row, justifyContent: "flex-end" } }, /* @__PURE__ */ h(Button, { onClick: onClose }, ready ? "Done" : "Cancel"), !ready && /* @__PURE__ */ h(Button, { variant: "prominent", loading: checking, onClick: catalog.retry }, "Check again")));
 }
 var providerOf = () => ({
   // Stable until the catalog changes: it is replaced, never changed.

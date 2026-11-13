@@ -211,7 +211,7 @@ describe("failures", () => {
     const message = mention("x");
     await runtime.run(message.delivery);
     const result = await settle(message);
-    expect(result.error).toMatch(/needs its adapter on this computer.*install-adapter\.sh \| sh/);
+    expect(result.error).toMatch(/needs Node\.js 22 or later on this computer/);
     expect(kit.replies).toHaveLength(1);
   });
 

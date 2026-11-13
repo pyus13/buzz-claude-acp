@@ -1,19 +1,39 @@
-// One `buzz-claude-acp` process and its JSON-RPC connection: newline-delimited
-// messages over stdio, as the Agent Client Protocol defines them.
-import { INSTALL_COMMAND, PROCESS, SCRUBBED_ENV, START_TIMEOUT_MS, STDERR_LIMIT, TITLE } from "../constants.js";
+// One Claude ACP adapter process (the manifest's `npx` command) and its
+// JSON-RPC connection: newline-delimited messages over stdio, as the Agent
+// Client Protocol defines them.
+import { ADAPTER_ENV, NODE_REQUIRED, PROCESS, START_TIMEOUT_MS, STDERR_LIMIT, TITLE } from "../constants.js";
 import { errorText, lastLines, permissionAnswer } from "./protocol.js";
 
 /* global __VERSION__ */
 const CLIENT_INFO = { name: "buzz-claude-acp", version: typeof __VERSION__ === "string" ? __VERSION__ : "dev" };
 
+/** npm could not find the pinned version in its cached package list: the
+ * cache predates that release, so ask the registry. */
+const STALE_CACHE = /ETARGET|notarget|No matching version/;
+/** npm could not reach the registry. */
+const OFFLINE = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|network/i;
+
 export class AcpConnection {
   /** Starts the adapter in `cwd` and completes the ACP handshake. With an
    * `agent`, the process carries a Buzz credential that acts as that agent,
-   * so `buzz` commands Claude runs reach the community as it (newer Buzz). */
-  static async start(host, { cwd, agent, permissionMode }) {
+   * so `buzz` commands Claude runs reach the community as it (newer Buzz).
+   *
+   * npx runs the pinned adapter from npm's cache, which is quick and works
+   * offline. A cache older than that release doesn't list it yet; then the
+   * start is tried once more with the registry. */
+  static async start(host, options) {
+    try {
+      return await AcpConnection.open(host, options, { npm_config_prefer_offline: "true" });
+    } catch (error) {
+      if (!error.staleCache) throw error;
+      return AcpConnection.open(host, options, { npm_config_prefer_offline: "false" });
+    }
+  }
+
+  static async open(host, { cwd, agent, permissionMode }, npm) {
     const connection = new AcpConnection(permissionMode);
     try {
-      await connection.spawn(host, cwd, agent);
+      await connection.spawn(host, cwd, agent, npm);
       if (agent && typeof connection.process.actAs === "function")
         await connection.process.actAs({ pubkey: agent.pubkey, relay: agent.relay }).catch((error) => {
           // Only `buzz` commands inside Claude's tools lose their identity.
@@ -33,8 +53,20 @@ export class AcpConnection {
     } catch (error) {
       // A process that never finished starting is not left running.
       void connection.stop();
-      throw error;
+      throw connection.startFailure(error);
     }
+  }
+
+  /** Why the adapter didn't start, in words a person can act on. */
+  startFailure(error) {
+    const said = this.stderr;
+    if (!/npm (error|ERR)/.test(said)) return error;
+    if (STALE_CACHE.test(said)) return Object.assign(new Error(errorText(error)), { staleCache: true });
+    if (OFFLINE.test(said))
+      return new Error(
+        `${TITLE} couldn't download Claude's ACP adapter: this computer can't reach the npm registry. Connect once; after that it starts offline.`,
+      );
+    return new Error(`${TITLE} couldn't install Claude's ACP adapter with npm:\n${lastLines(said, 4)}`);
   }
 
   /** `permissionMode(sessionId)`: the mode a session runs in, which decides
@@ -56,12 +88,12 @@ export class AcpConnection {
     this.closeListeners = new Set();
   }
 
-  async spawn(host, cwd, agent) {
+  async spawn(host, cwd, agent, npm = {}) {
     let buffer = "";
     try {
       this.process = await host.spawn(PROCESS, {
         cwd,
-        env: SCRUBBED_ENV,
+        env: { ...ADAPTER_ENV, ...npm },
         ...(agent ? { agentCredential: true } : {}),
         onStdout: (data) => {
           buffer += data;
@@ -77,11 +109,11 @@ export class AcpConnection {
       });
     } catch (error) {
       const reason = errorText(error);
-      // The usual case on a new computer: the adapter was never installed.
+      // No npx: Node.js isn't installed, or not where Buzz looks for programs.
       throw new Error(
         /no such file|not found|os error 2|enoent/i.test(reason)
-          ? `${TITLE} needs its adapter on this computer. In Terminal, run: ${INSTALL_COMMAND}`
-          : `Could not start buzz-claude-acp (${reason}). Reinstall it: ${INSTALL_COMMAND}`,
+          ? `${TITLE} needs ${NODE_REQUIRED} on this computer. Install it from https://nodejs.org, then press Check again in Settings → Agent setup.`
+          : `Could not start Claude's ACP adapter (${reason}).`,
       );
     }
     void this.process.exited.then(

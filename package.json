@@ -1,11 +1,11 @@
 {
   "name": "buzz-claude-acp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "A Buzz harness plugin that runs Claude Code through the Agent Client Protocol, signed in with your own Claude account.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

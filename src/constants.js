@@ -4,12 +4,12 @@ export const TYPE_ID = "claude-acp";
 export const TITLE = "Claude (ACP)";
 /** The plugin id, used when the host does not say which plugin owns a call. */
 export const PLUGIN_ID = "local.claude-acp";
-/** The `host.processes` entry in manifest.json. */
+/** The `host.processes` entry in manifest.json. It runs the pinned Claude ACP
+ * adapter with `npx`, which downloads it once and runs it from npm's cache
+ * after, so a computer needs only Node.js, no install step. */
 export const PROCESS = "claude";
-/** Installs the program that entry starts. Buzz installs only the plugin, never
- * its adapter, so each computer runs this once. */
-export const INSTALL_COMMAND =
-  "curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh";
+/** What the adapter needs on the computer (its `engines`). */
+export const NODE_REQUIRED = "Node.js 22 or later";
 
 /** Buzz's own Claude harness. Its Activity tab and usage reader read the same
  * Claude Code session files this harness writes, so they are reused here. */
@@ -31,10 +31,13 @@ export const SCOPES = Object.freeze([
   ["channel", "One session per channel"],
 ]);
 
-/** Removed from the adapter's environment: each would make Claude use
- * something other than the person's own login, or think it runs inside
- * another Claude session. */
-export const SCRUBBED_ENV = Object.freeze({
+/** The adapter's environment, over Buzz's own. Removed: each variable that
+ * would make Claude use something other than the person's own login, or think
+ * it runs inside another Claude session. Set: npm quiet, as its notices are
+ * no use to anyone here. */
+export const ADAPTER_ENV = Object.freeze({
+  npm_config_update_notifier: "false",
+  npm_config_fund: "false",
   ANTHROPIC_API_KEY: null,
   ANTHROPIC_AUTH_TOKEN: null,
   CLAUDECODE: null,

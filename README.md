@@ -14,28 +14,38 @@ session, Compact, sessions that resume across restarts, Activity and usage.
 
 ## Install
 
-You need Buzz desktop (macOS or Linux, November 2026 or later), Node.js 20+, and
-Claude Code signed in once with `claude auth login`.
+Each computer needs **three things**. Buzz installs only the plugin, never the
+adapter it runs, so do step 1 on every computer you use it on.
 
-**1. Install the adapter** (what the plugin starts). From a clone of this repository, or
-the release zip:
+You need Buzz desktop (macOS or Linux, November 2026 or later), Node.js 20+
+([nodejs.org](https://nodejs.org)), and [Claude Code](https://claude.com/claude-code)
+signed in once with `claude auth login`.
+
+**1. Install the adapter.** In Terminal:
 
 ```sh
-sh scripts/install-adapter.sh          # installs, then checks it answers
-sh scripts/install-adapter.sh --check  # only checks
+curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh
 ```
+
+It installs a pinned adapter under `~/.local/share/buzz-claude-acp`, writes
+`~/.local/bin/buzz-claude-acp`, and checks that it answers. Run it again to repair or
+update. From a clone, `sh scripts/install-adapter.sh` does the same, and `--check` only
+checks.
 
 **2. Add the plugin to Buzz:** Settings → Plugins → Manage plugins → **Add**, then one of:
 
 | Option | What to enter |
 |---|---|
-| **Git or GitHub repository** | `OWNER/buzz-claude-acp`. Branch or tag: a release tag like `v1.0.0`, or blank for the latest. Folder: `plugin`. |
+| **Git or GitHub repository** | `pyus13/buzz-claude-acp`. Branch or tag: a release tag like `v1.0.0`, or blank for the latest. Folder: `plugin`. |
 | **From URL** | The release's `claude-acp-<version>.plugin.json` link and its SHA-256 from `SHA256SUMS`. |
 | **From folder** | **Browse** to this repository's `plugin` folder. |
 
 **3. Use it:** New agent → Create a new agent → Harness **Claude (ACP)**, then mention
 the agent in a conversation. Settings → Agent setup shows the sign-in and a default
 model for this device.
+
+If you skipped step 1, the agent and Settings → Agent setup say "Claude (ACP) needs its
+adapter on this computer" with the command above. Run it, then press **Check again**.
 
 **Updating:** open the plugin in Settings → Plugins and choose **Update**. Rerun the
 installer when a release changes the adapter version.
@@ -98,7 +108,7 @@ build. Never edit `plugin/plugin.js` by hand.
 
 | Symptom | Fix |
 |---|---|
-| "Could not start buzz-claude-acp" | Run `sh scripts/install-adapter.sh`. |
+| "Claude (ACP) needs its adapter on this computer", or "Could not start buzz-claude-acp" | Run the installer from step 1 on that computer, then **Check again**. |
 | Agent setup says "Sign in to Claude" | Run `claude auth login`, then **Check again**. |
 | "Claude (ACP) could not finish: …" | The text after the colon is Claude's or the adapter's error. |
 | A conversation seems stuck | Use **Start a new session** on the conversation. |

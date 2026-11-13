@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+- **One-line adapter install** for each computer, no clone needed:
+  `curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh`.
+  Buzz installs only the plugin, so a computer without the adapter couldn't start it.
+- When the adapter is missing, the agent and Settings → Agent setup say so and show
+  that command.
+- The installer says when Claude Code is missing, and points at Node.js when it is.
+
 ## 1.0.0
 
 First release.

@@ -1,10 +1,11 @@
-// Claude (ACP) for Buzz 1.0.0. Built from src/ by scripts/build.mjs; edit the sources, not this file.
+// Claude (ACP) for Buzz 1.0.1. Built from src/ by scripts/build.mjs; edit the sources, not this file.
 
 // src/constants.js
 var TYPE_ID = "claude-acp";
 var TITLE = "Claude (ACP)";
 var PLUGIN_ID = "local.claude-acp";
 var PROCESS = "claude";
+var INSTALL_COMMAND = "curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh";
 var CLAUDE_TYPE = "buzz.claude-code/claude-code";
 var CLAUDE_SESSIONS = "buzz.claude-code.sessions.v1";
 var MODES = Object.freeze([
@@ -176,7 +177,7 @@ var lastLines = (text, count = 6) => text.trim().split("\n").slice(-count).join(
 var effortLabel = (id) => id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
 
 // src/acp/connection.js
-var CLIENT_INFO = { name: "buzz-claude-acp", version: true ? "1.0.0" : "dev" };
+var CLIENT_INFO = { name: "buzz-claude-acp", version: true ? "1.0.1" : "dev" };
 var AcpConnection = class _AcpConnection {
   /** Starts the adapter in `cwd` and completes the ACP handshake. With an
    * `agent`, the process carries a Buzz credential that acts as that agent,
@@ -240,8 +241,9 @@ var AcpConnection = class _AcpConnection {
         }
       });
     } catch (error) {
+      const reason = errorText(error);
       throw new Error(
-        `Could not start buzz-claude-acp (${errorText(error)}). Install it with the plugin's scripts/install-adapter.sh.`
+        /no such file|not found|os error 2|enoent/i.test(reason) ? `${TITLE} needs its adapter on this computer. In Terminal, run: ${INSTALL_COMMAND}` : `Could not start buzz-claude-acp (${reason}). Reinstall it: ${INSTALL_COMMAND}`
       );
     }
     void this.process.exited.then(

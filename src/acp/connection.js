@@ -1,6 +1,6 @@
 // One `buzz-claude-acp` process and its JSON-RPC connection: newline-delimited
 // messages over stdio, as the Agent Client Protocol defines them.
-import { PROCESS, SCRUBBED_ENV, START_TIMEOUT_MS, STDERR_LIMIT, TITLE } from "../constants.js";
+import { INSTALL_COMMAND, PROCESS, SCRUBBED_ENV, START_TIMEOUT_MS, STDERR_LIMIT, TITLE } from "../constants.js";
 import { errorText, lastLines, permissionAnswer } from "./protocol.js";
 
 /* global __VERSION__ */
@@ -76,8 +76,12 @@ export class AcpConnection {
         },
       });
     } catch (error) {
+      const reason = errorText(error);
+      // The usual case on a new computer: the adapter was never installed.
       throw new Error(
-        `Could not start buzz-claude-acp (${errorText(error)}). Install it with the plugin's scripts/install-adapter.sh.`,
+        /no such file|not found|os error 2|enoent/i.test(reason)
+          ? `${TITLE} needs its adapter on this computer. In Terminal, run: ${INSTALL_COMMAND}`
+          : `Could not start buzz-claude-acp (${reason}). Reinstall it: ${INSTALL_COMMAND}`,
       );
     }
     void this.process.exited.then(

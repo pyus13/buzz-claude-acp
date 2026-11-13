@@ -6,6 +6,10 @@ export const TITLE = "Claude (ACP)";
 export const PLUGIN_ID = "local.claude-acp";
 /** The `host.processes` entry in manifest.json. */
 export const PROCESS = "claude";
+/** Installs the program that entry starts. Buzz installs only the plugin, never
+ * its adapter, so each computer runs this once. */
+export const INSTALL_COMMAND =
+  "curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh";
 
 /** Buzz's own Claude harness. Its Activity tab and usage reader read the same
  * Claude Code session files this harness writes, so they are reused here. */

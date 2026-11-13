@@ -4,10 +4,17 @@ Run agents on Claude Code, signed in with your own Claude account, through the A
 Client Protocol. Pick **Claude (ACP)** as an agent's Harness and mention it in a
 conversation.
 
-## Before you start
+## Before you start, on each computer
 
-- Install the adapter: `sh scripts/install-adapter.sh` from the plugin's repository.
-- Sign in to Claude once: `claude auth login`.
+Buzz installs this plugin, not the adapter it runs. In Terminal, run once:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pyus13/buzz-claude-acp/main/scripts/install-adapter.sh | sh
+```
+
+It needs Node.js 20 or later. Then sign in to Claude once with `claude auth login`
+(from [Claude Code](https://claude.com/claude-code)), and press **Check again** in
+Settings → Agent setup.
 
 ## Settings
 

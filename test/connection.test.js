@@ -39,7 +39,9 @@ describe("AcpConnection", () => {
 
   it("explains a missing adapter", async () => {
     const host = { spawn: async () => Promise.reject(new Error("program not found")) };
-    await expect(AcpConnection.start(host, { cwd: "/w" })).rejects.toThrow(/install-adapter\.sh/);
+    await expect(AcpConnection.start(host, { cwd: "/w" })).rejects.toThrow(
+      /needs its adapter on this computer\. In Terminal, run: curl -fsSL https:\/\/raw\.githubusercontent\.com\/pyus13\/buzz-claude-acp\/main\/scripts\/install-adapter\.sh \| sh/,
+    );
   });
 
   it("routes updates to their session and answers the adapter's requests", async () => {
